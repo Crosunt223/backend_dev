@@ -8,21 +8,28 @@ const crypto     = require('crypto');
 
 // ── Email (nodemailer) ───────────────────────────────────────────
 let transporter = null;
+let nodemailerOk = false;
 try {
     const nodemailer = require('nodemailer');
-    transporter = nodemailer.createTransport({
-        host:   process.env.SMTP_HOST   || 'smtp.gmail.com',
-        port:   parseInt(process.env.SMTP_PORT || '587'),
-        secure: false,
-        auth: {
-            user: process.env.SMTP_USER || '',
-            pass: process.env.SMTP_PASS || '',
-        }
-    });
+    if (process.env.SMTP_USER && process.env.SMTP_PASS) {
+        transporter = nodemailer.createTransport({
+            host:   process.env.SMTP_HOST   || 'smtp.gmail.com',
+            port:   parseInt(process.env.SMTP_PORT || '587'),
+            secure: false,
+            auth: {
+                user: process.env.SMTP_USER,
+                pass: process.env.SMTP_PASS,
+            }
+        });
+        nodemailerOk = true;
+        console.log('SMTP skonfigurowany:', process.env.SMTP_USER);
+    } else {
+        console.log('SMTP: brak SMTP_USER/SMTP_PASS — email zapisywany bez weryfikacji');
+    }
 } catch(e) { console.warn('nodemailer niedostepny:', e.message); }
 
 async function sendMail(to, subject, html) {
-    if (!transporter || !process.env.SMTP_USER) {
+    if (!nodemailerOk || !transporter) {
         console.log('[MAIL DISABLED] To:', to, '| Subject:', subject);
         return false;
     }
@@ -31,9 +38,16 @@ async function sendMail(to, subject, html) {
             from: '"Ksiazeczka Harcerska" <' + process.env.SMTP_USER + '>',
             to, subject, html
         });
+        console.log('[MAIL SENT] To:', to);
         return true;
-    } catch(e) { console.error('Blad wysylki maila:', e.message); return false; }
+    } catch(e) { 
+        console.error('Blad wysylki maila:', e.message); 
+        return false; 
+    }
 }
+
+// Czy SMTP jest gotowe
+function smtpReady() { return nodemailerOk && !!transporter; }
 
 const app = express();
 app.use(cors({
@@ -938,9 +952,7 @@ app.post('/api/me/change-email', requireAuth, async (req, res) => {
         const existing = await User.findOne({ email: newEmail.toLowerCase().trim(), _id: { $ne: user._id } });
         if (existing) return res.status(400).json({ error: 'Ten email jest juz zajety' });
 
-        const smtpConfigured = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
-
-        if (smtpConfigured) {
+        if (smtpReady()) {
             // SMTP skonfigurowane — wyslij link potwierdzajacy, email zapisze sie po kliknieciu
             const token = crypto.randomBytes(32).toString('hex');
             user.emailToken    = token;
@@ -1047,6 +1059,11 @@ app.post('/api/reset-password/confirm', async (req, res) => {
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
-app.get('/api/ping', (req, res) => res.json({ status: 'ok', time: new Date() }));
+app.get('/api/ping', (req, res) => res.json({ 
+    status: 'ok', 
+    time: new Date(),
+    smtp: smtpReady() ? 'configured' : 'disabled',
+    smtpUser: process.env.SMTP_USER ? process.env.SMTP_USER.replace(/(.{3}).*(@.*)/, '$1***$2') : null
+}));
 
 app.listen(PORT, () => console.log('Serwer port ' + PORT));
