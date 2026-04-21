@@ -36,7 +36,16 @@ async function sendMail(to, subject, html) {
 }
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: [
+        'https://crosunt223.github.io',
+        'http://localhost:3000',
+        'http://localhost:5500',
+        'http://127.0.0.1:5500',
+        'http://localhost:8080'
+    ],
+    credentials: true
+}));
 app.use(bodyParser.json());
 
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/harcerze';
