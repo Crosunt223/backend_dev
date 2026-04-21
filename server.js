@@ -938,23 +938,33 @@ app.post('/api/me/change-email', requireAuth, async (req, res) => {
         const existing = await User.findOne({ email: newEmail.toLowerCase().trim(), _id: { $ne: user._id } });
         if (existing) return res.status(400).json({ error: 'Ten email jest juz zajety' });
 
-        const token = crypto.randomBytes(32).toString('hex');
-        user.emailToken    = token;
-        user.emailTokenExp = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h
-        user.pendingEmail  = newEmail.toLowerCase().trim();
-        await user.save();
+        const smtpConfigured = !!(process.env.SMTP_USER && process.env.SMTP_PASS);
 
-        const link = (process.env.FRONTEND_URL || 'https://crosunt223.github.io') + '?confirmEmail=' + token;
-        const sent = await sendMail(
-            newEmail,
-            'Potwierdz nowy email — Ksiazeczka Harcerska',
-            '<p>Czuwaj, <strong>' + user.name + '</strong>!</p>'
-            + '<p>Kliknij ponizszy link aby potwierdzic nowy email:</p>'
-            + '<p><a href="' + link + '" style="background:#2e7d32;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Potwierdz email</a></p>'
-            + '<p style="color:#888;font-size:12px">Link wazny 24 godziny.</p>'
-        );
+        if (smtpConfigured) {
+            // SMTP skonfigurowane — wyslij link potwierdzajacy, email zapisze sie po kliknieciu
+            const token = crypto.randomBytes(32).toString('hex');
+            user.emailToken    = token;
+            user.emailTokenExp = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            user.pendingEmail  = newEmail.toLowerCase().trim();
+            await user.save();
 
-        res.json({ success: true, emailSent: sent, message: sent ? 'Link potwierdzajacy wyslany na ' + newEmail : 'Blad wysylki — skontaktuj sie z adminem' });
+            const link = (process.env.FRONTEND_URL || 'https://crosunt223.github.io') + '?confirmEmail=' + token;
+            await sendMail(
+                newEmail,
+                'Potwierdz nowy email — Ksiazeczka Harcerska',
+                '<p>Czuwaj, <strong>' + user.name + '</strong>!</p>'
+                + '<p>Kliknij ponizszy link aby potwierdzic nowy email:</p>'
+                + '<p><a href="' + link + '" style="background:#2e7d32;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:bold">Potwierdz email</a></p>'
+                + '<p style="color:#888;font-size:12px">Link wazny 24 godziny.</p>'
+            );
+            res.json({ success: true, confirmed: false, message: 'Link potwierdzajacy wyslany na ' + newEmail + '. Kliknij go aby zapisac email.' });
+        } else {
+            // SMTP nie skonfigurowane — zapisz email od razu
+            user.email = newEmail.toLowerCase().trim();
+            user.emailToken = null; user.emailTokenExp = null; user.pendingEmail = null;
+            await user.save();
+            res.json({ success: true, confirmed: true, message: '✓ Email zapisany: ' + user.email });
+        }
     } catch(e) { console.error(e); res.status(500).json({ error: e.message }); }
 });
 
