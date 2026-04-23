@@ -53,6 +53,7 @@ const app = express();
 app.use(cors({
     origin: [
         'https://crosunt223.github.io',
+        'https://ksisapp.netlify.app',
         'http://localhost:3000',
         'http://localhost:5500',
         'http://127.0.0.1:5500',
@@ -101,8 +102,9 @@ const userSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 const progressSchema = new mongoose.Schema({
-    userId: { type: mongoose.Schema.Types.ObjectId, required: true, unique: true, ref: 'User' },
-    tasks:  { type: mongoose.Schema.Types.Mixed, default: {} }
+    userId:    { type: mongoose.Schema.Types.ObjectId, required: true, unique: true, ref: 'User' },
+    tasks:     { type: mongoose.Schema.Types.Mixed, default: {} },
+    taskDates: { type: mongoose.Schema.Types.Mixed, default: {} } // taskId -> timestamp (ms)
 }, { timestamps: true });
 
 const Team     = mongoose.model('Team',     teamSchema);
@@ -1056,6 +1058,43 @@ app.post('/api/reset-password/confirm', async (req, res) => {
         user.resetTokenExp = null;
         await user.save();
         res.json({ success: true, message: 'Haslo zostalo zmienione. Mozesz sie zalogowac.' });
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ================================================================
+// DATY ZALICZEŃ (do statystyk)
+// ================================================================
+
+// Pobierz daty zaliczeń dla zalogowanego usera
+app.get('/api/progress/:userId/dates', requireAuth, async (req, res) => {
+    try {
+        // Tylko własne lub admin
+        if (req.user.id.toString() !== req.params.userId && req.user.role === 'user')
+            return res.status(403).json({ error: 'Brak uprawnien' });
+        const p = await Progress.findOne({ userId: req.params.userId });
+        const dates = p ? (p.toObject().taskDates || {}) : {};
+        res.json(dates);
+    } catch(e) { res.status(500).json({ error: e.message }); }
+});
+
+// Zapisz/usuń datę zaliczenia zadania
+app.post('/api/progress/date', requireAuth, async (req, res) => {
+    try {
+        const { taskId, timestamp } = req.body; // timestamp null = usuń
+        if (!taskId) return res.status(400).json({ error: 'Brak taskId' });
+
+        const safeKey = 'taskDates.' + taskId.replace(/[.]/g, '_');
+        const update  = timestamp
+            ? { $set:   { [safeKey]: timestamp } }
+            : { $unset: { [safeKey]: '' } };
+
+        await Progress.findOneAndUpdate(
+            { userId: req.user.id },
+            update,
+            { upsert: true, new: true }
+        );
+        res.json({ success: true });
     } catch(e) { res.status(500).json({ error: e.message }); }
 });
 
